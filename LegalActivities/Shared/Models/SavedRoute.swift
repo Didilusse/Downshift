@@ -8,12 +8,14 @@
 import Foundation
 import CoreLocation
 
-struct SavedRoute: Identifiable, Codable {
+struct SavedRoute: Identifiable, Codable, Hashable {
     let id: UUID
     var name: String
     var coordinates: [Coordinate] // Array of custom Coordinate struct
     var createdDate: Date
     var raceHistory: [RaceResult] = []
+    var difficulty: Difficulty = .medium
+    var tags: [String] = []
 
     struct Coordinate: Codable {
         var latitude: CLLocationDegrees
@@ -22,13 +24,14 @@ struct SavedRoute: Identifiable, Codable {
         var clCoordinate: CLLocationCoordinate2D { CLLocationCoordinate2D(latitude: latitude, longitude: longitude) }
     }
 
-    // Update initializer to include optional raceHistory
-    init(id: UUID = UUID(), name: String, coordinates: [CLLocationCoordinate2D], createdDate: Date = Date(), raceHistory: [RaceResult] = []) {
+    init(id: UUID = UUID(), name: String, coordinates: [CLLocationCoordinate2D], createdDate: Date = Date(), raceHistory: [RaceResult] = [], difficulty: Difficulty = .medium, tags: [String] = []) {
         self.id = id
         self.name = name
         self.coordinates = coordinates.map(Coordinate.init)
         self.createdDate = createdDate
-        self.raceHistory = raceHistory // Assign history
+        self.raceHistory = raceHistory
+        self.difficulty = difficulty
+        self.tags = tags
     }
 
     // Helper to get CLLocationCoordinate2D array easily
@@ -39,4 +42,8 @@ struct SavedRoute: Identifiable, Codable {
     // Helper to get start/end coordinates if they exist
     var startCoordinate: CLLocationCoordinate2D? { clCoordinates.first }
     var endCoordinate: CLLocationCoordinate2D? { clCoordinates.last }
+
+    // Hashable conformance based on id only
+    static func == (lhs: SavedRoute, rhs: SavedRoute) -> Bool { lhs.id == rhs.id }
+    func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
