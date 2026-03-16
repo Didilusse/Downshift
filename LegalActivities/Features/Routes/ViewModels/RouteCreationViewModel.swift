@@ -205,7 +205,7 @@ class RouteCreationViewModel: ObservableObject {
     }
     
     // MARK: - Saving
-    func saveRoute(name: String) -> Bool { // Return Bool indicating success/failure
+    func saveRoute(name: String, difficulty: Difficulty = .medium, tags: [String] = []) -> Bool {
         guard canSaveRoute else {
             print("Cannot save route: Missing start or end point.")
             return false
@@ -215,9 +215,9 @@ class RouteCreationViewModel: ObservableObject {
             print("Cannot save route: Name is empty.")
             return false
         }
-        
+
         let coordinates = self.annotations.map { $0.coordinate }
-        let newRoute = SavedRoute(name: trimmedName, coordinates: coordinates)
+        let newRoute = SavedRoute(name: trimmedName, coordinates: coordinates, difficulty: difficulty, tags: tags)
         
         // Load existing, append, and save back
         var currentSavedRoutes: [SavedRoute] = []

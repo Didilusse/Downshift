@@ -7,44 +7,33 @@
 //
 
 import SwiftUI
-import MapKit
 
 struct ContentView: View {
     @StateObject var appState = AppState()
 
     var body: some View {
-        TabView {
+        TabView(selection: $appState.selectedTab) {
             HomeView()
                 .environmentObject(appState)
-                .tabItem {
-                    Label("Home", systemImage: "house.fill")
-                }
-
-            RoutesListView()
-                .environmentObject(appState)
-                .tabItem {
-                    Label("Routes", systemImage: "map.fill")
-                }
+                .tabItem { Label("Home", systemImage: "house.fill") }
+                .tag(0)
 
             FriendsView()
                 .environmentObject(appState)
-                .tabItem {
-                    Label("Friends", systemImage: "person.2.fill")
-                }
+                .tabItem { Label("Social", systemImage: "person.2.fill") }
+                .tag(1)
 
             LeaderboardsView()
                 .environmentObject(appState)
-                .tabItem {
-                    Label("Rankings", systemImage: "list.number")
-                }
+                .tabItem { Label("Rankings", systemImage: "list.number") }
+                .tag(2)
 
             NavigationStack {
                 ProfileView()
                     .environmentObject(appState)
             }
-            .tabItem {
-                Label("Profile", systemImage: "person.circle.fill")
-            }
+            .tabItem { Label("Profile", systemImage: "person.circle.fill") }
+            .tag(3)
         }
     }
 }

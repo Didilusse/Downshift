@@ -10,7 +10,6 @@ import SwiftUI
 
 struct HomeView: View {
     @EnvironmentObject var appState: AppState
-    @State private var showStartRacing = false
     @State private var showFullFeed = false
     @State private var showProfile = false
 
@@ -37,10 +36,6 @@ struct HomeView: View {
                     }
                 }
             }
-            .sheet(isPresented: $showStartRacing) {
-                StartRacingView()
-                    .environmentObject(appState)
-            }
             .sheet(isPresented: $showProfile) {
                 NavigationStack {
                     ProfileView()
@@ -64,8 +59,9 @@ struct HomeView: View {
         let weekStats = appState.thisWeekStats()
         let units = appState.userProfile.unitPreference
 
-        return Button {
-            showProfile = true
+        return NavigationLink {
+            StatsView()
+                .environmentObject(appState)
         } label: {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
@@ -132,6 +128,7 @@ struct HomeView: View {
             HStack(spacing: 12) {
                 NavigationLink {
                     RouteCreationView()
+                        .environmentObject(appState)
                 } label: {
                     quickActionButton(
                         icon: "plus.circle.fill",
@@ -141,8 +138,9 @@ struct HomeView: View {
                 }
                 .buttonStyle(.plain)
 
-                Button {
-                    showStartRacing = true
+                NavigationLink {
+                    StartRacingView()
+                        .environmentObject(appState)
                 } label: {
                     quickActionButton(
                         icon: "flag.checkered",

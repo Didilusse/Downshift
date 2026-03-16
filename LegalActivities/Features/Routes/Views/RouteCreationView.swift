@@ -2,200 +2,483 @@
 //  RouteCreationView.swift
 //  LegalActivities
 //
-//  Created by Adil Rahmani on 5/12/25.
-//
+
 import SwiftUI
 import MapKit
 
 struct RouteCreationView: View {
     @StateObject var vm = RouteCreationViewModel()
+    @EnvironmentObject var appState: AppState
+    @Environment(\.dismiss) private var dismiss
+
     @State private var selectedPointType: LocationPin.PointType = .start
     @State private var mapView = MKMapView()
     @State private var showingSaveSheet = false
     @State private var dragInProgress = false
-    
+    @State private var showCheckpointList = false
+    @State private var isCalculatingRoute = false
+    @State private var savedRouteName: String? = nil  // set on success → triggers success overlay
+
     var body: some View {
-        ZStack(alignment: .bottom) {
-            // Map View with drag handling
+        ZStack {
+            // MARK: - Full-screen map
             MapViewBridge(
-                            mapView: $mapView,
-                            annotations: vm.annotations,
-                            routeSegments: vm.routeSegments,
-                            vm: vm,
-                            onMapTap: handleMapTap,
-                            // <<< Use the updated callback name
-                            onAnnotationDragStateChanged: handleAnnotationDragStateChanged
-                        )
-                        .edgesIgnoringSafeArea(.all)
-                        .onAppear(perform: setupMap)
-            
-            // Control Panel
-            VStack(spacing: 16) {
-                headerControls
-                
-                // Horizontal Point Type Selector
-                HStack(spacing: 20) {
-                    ControlButton(
-                        icon: "flag.fill",
-                        label: "Start",
-                        color: .green,
-                        isSelected: selectedPointType == .start
-                    ) {
-                        selectedPointType = .start
+                mapView: $mapView,
+                annotations: vm.annotations,
+                routeSegments: vm.routeSegments,
+                vm: vm,
+                onMapTap: handleMapTap,
+                onAnnotationDragStateChanged: handleAnnotationDragStateChanged
+            )
+            .ignoresSafeArea()
+            .onAppear(perform: setupMap)
+
+            // MARK: - Top bar
+            VStack {
+                topBar
+                Spacer()
+            }
+            .ignoresSafeArea(edges: .top)
+
+            // MARK: - Bottom panel
+            VStack {
+                Spacer()
+                bottomPanel
+            }
+            .ignoresSafeArea(edges: .bottom)
+
+            // MARK: - Route calculating indicator
+            if isCalculatingRoute {
+                VStack {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .progressViewStyle(.circular)
+                            .scaleEffect(0.8)
+                        Text("Calculating route…")
+                            .font(.caption)
+                            .fontWeight(.medium)
                     }
-                    
-                    ControlButton(
-                        icon: "mappin.circle.fill",
-                        label: "Checkpoint",
-                        color: .blue,
-                        isSelected: selectedPointType == .checkpoint
-                    ) {
-                        selectedPointType = .checkpoint
-                    }
-                    
-                    ControlButton(
-                        icon: "flag.checkered",
-                        label: "End",
-                        color: .red,
-                        isSelected: selectedPointType == .end
-                    ) {
-                        selectedPointType = .end
-                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(.regularMaterial, in: Capsule())
+                    .padding(.top, 120)
+                    Spacer()
                 }
-                .padding()
-                .background(.ultraThinMaterial)
-                .cornerRadius(16)
-                
-                // Contextual Controls
-                HStack {
-                    if vm.selectedAnnotation != nil {
-                        Button(action: vm.removeSelectedAnnotation) {
-                            Image(systemName: "trash")
-                                .padding(12)
-                                .background(.red)
-                                .foregroundColor(.white)
-                                .clipShape(Circle())
+            }
+
+            // MARK: - Route saved success overlay
+            if let name = savedRouteName {
+                RouteCreatedOverlay(routeName: name) {
+                    appState.loadRoutes()
+                    appState.selectedTab = 0
+                    dismiss()
+                }
+                .transition(.opacity)
+                .zIndex(10)
+            }
+        }
+        .navigationTitle("")
+        .navigationBarHidden(true)
+        .toolbar(.hidden, for: .tabBar)
+        .sheet(isPresented: $showingSaveSheet) {
+            SaveRouteView(vm: vm, isPresented: $showingSaveSheet) { name in
+                withAnimation(.easeInOut(duration: 0.35)) {
+                    savedRouteName = name
+                }
+            }
+        }
+        .sheet(isPresented: $showCheckpointList) {
+            checkpointListSheet
+        }
+        // Observe when segments finish calculating
+        .onChange(of: vm.routeSegments) {
+            withAnimation { isCalculatingRoute = false }
+        }
+        .onChange(of: vm.annotations) {
+            if vm.annotations.count >= 2 {
+                withAnimation { isCalculatingRoute = true }
+            }
+        }
+    }
+
+    // MARK: - Top Bar
+    private var topBar: some View {
+        HStack(spacing: 12) {
+            // Back button
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .frame(width: 40, height: 40)
+                    .background(.regularMaterial, in: Circle())
+            }
+
+            Spacer()
+
+            // Route stats pill
+            if !vm.annotations.isEmpty {
+                routeStatsPill
+                    .transition(.scale.combined(with: .opacity))
+            }
+
+            Spacer()
+
+            // Zoom-to-fit button
+            Button {
+                vm.zoomToFitRouteSegments(mapView: mapView)
+            } label: {
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .frame(width: 40, height: 40)
+                    .background(.regularMaterial, in: Circle())
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 56)
+        .animation(.spring(response: 0.3), value: vm.annotations.isEmpty)
+    }
+
+    private var routeStatsPill: some View {
+        HStack(spacing: 10) {
+            Label("\(vm.annotations.count)", systemImage: "mappin")
+                .font(.caption)
+                .fontWeight(.semibold)
+
+            if vm.routeSegments.count > 0 {
+                Divider().frame(height: 12)
+                Label("\(vm.routeSegments.count) seg", systemImage: "road.lanes")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+            }
+        }
+        .foregroundStyle(.primary)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(.regularMaterial, in: Capsule())
+    }
+
+    // MARK: - Bottom Panel
+    private var bottomPanel: some View {
+        VStack(spacing: 0) {
+            // Selected pin action bar (slides in when a pin is selected)
+            if let selected = vm.selectedAnnotation {
+                selectedPinBar(for: selected)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
+            // Divider line
+            Divider().opacity(0.3)
+
+            // Pin type selector
+            pinTypeSelector
+
+            // Action row
+            actionRow
+        }
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .padding(.horizontal, 12)
+        .padding(.bottom, 8)
+        .shadow(color: .black.opacity(0.15), radius: 20, x: 0, y: -4)
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: vm.selectedAnnotation?.id)
+    }
+
+    // MARK: - Selected Pin Bar
+    private func selectedPinBar(for pin: LocationPin) -> some View {
+        HStack(spacing: 16) {
+            // Pin type icon
+            Image(systemName: pin.type.icon)
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(pinTypeColor(pin.type))
+                .frame(width: 40, height: 40)
+                .background(pinTypeColor(pin.type).opacity(0.12), in: Circle())
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(pin.type == .start ? "Start Point" : pin.type == .end ? "End Point" : "Checkpoint \(vm.getCheckpointNumber(for: pin) ?? 0)")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                Text("Selected — tap map to deselect")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Button(role: .destructive) {
+                withAnimation { vm.removeSelectedAnnotation() }
+            } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.red)
+                    .frame(width: 36, height: 36)
+                    .background(Color.red.opacity(0.1), in: Circle())
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+    }
+
+    // MARK: - Pin Type Selector
+    private var pinTypeSelector: some View {
+        HStack(spacing: 8) {
+            PinTypeButton(
+                icon: "flag.fill",
+                label: "Start",
+                color: .green,
+                isSelected: selectedPointType == .start,
+                hasPin: vm.annotations.contains { $0.type == .start }
+            ) {
+                selectedPointType = .start
+            }
+
+            PinTypeButton(
+                icon: "mappin",
+                label: "Checkpoint",
+                color: .blue,
+                isSelected: selectedPointType == .checkpoint,
+                hasPin: !vm.checkpoints.isEmpty
+            ) {
+                selectedPointType = .checkpoint
+            }
+
+            PinTypeButton(
+                icon: "flag.checkered",
+                label: "Finish",
+                color: .red,
+                isSelected: selectedPointType == .end,
+                hasPin: vm.annotations.contains { $0.type == .end }
+            ) {
+                selectedPointType = .end
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+
+    // MARK: - Action Row
+    private var actionRow: some View {
+        HStack(spacing: 12) {
+            // Checkpoint list button (only visible when checkpoints exist)
+            if !vm.checkpoints.isEmpty {
+                Button {
+                    showCheckpointList = true
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "list.number")
+                            .font(.system(size: 14, weight: .medium))
+                        Text("\(vm.checkpoints.count)")
+                            .font(.system(size: 14, weight: .semibold))
+                    }
+                    .foregroundStyle(.blue)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(Color.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
+                }
+                .transition(.scale.combined(with: .opacity))
+            }
+
+            // User location button
+            Button {
+                vm.centerMapOnUser(mapView: mapView)
+            } label: {
+                Image(systemName: "location.fill")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .padding(10)
+                    .background(.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+            }
+
+            Spacer()
+
+            // Save button
+            Button {
+                showingSaveSheet = true
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 14, weight: .bold))
+                    Text("Save Route")
+                        .font(.system(size: 15, weight: .semibold))
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 11)
+                .background(
+                    vm.canSaveRoute
+                        ? Color.blue
+                        : Color.secondary.opacity(0.3),
+                    in: RoundedRectangle(cornerRadius: 14)
+                )
+            }
+            .disabled(!vm.canSaveRoute)
+            .animation(.easeInOut(duration: 0.2), value: vm.canSaveRoute)
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 20)
+        .animation(.spring(response: 0.3), value: vm.checkpoints.isEmpty)
+    }
+
+    // MARK: - Checkpoint List Sheet
+    private var checkpointListSheet: some View {
+        NavigationStack {
+            List {
+                if vm.checkpoints.isEmpty {
+                    ContentUnavailableView("No Checkpoints", systemImage: "mappin.slash", description: Text("Tap the map with 'Checkpoint' selected to add one."))
+                } else {
+                    ForEach(vm.checkpoints, id: \.id) { cp in
+                        Button {
+                            vm.selectAnnotation(cp)
+                            let region = MKCoordinateRegion(
+                                center: cp.coordinate,
+                                span: MKCoordinateSpan(latitudeDelta: 0.005, longitudeDelta: 0.005)
+                            )
+                            mapView.setRegion(region, animated: true)
+                            showCheckpointList = false
+                        } label: {
+                            HStack(spacing: 14) {
+                                ZStack {
+                                    Circle()
+                                        .fill(Color.blue.opacity(0.12))
+                                        .frame(width: 36, height: 36)
+                                    Text("\(vm.getCheckpointNumber(for: cp) ?? 0)")
+                                        .font(.system(size: 14, weight: .bold))
+                                        .foregroundStyle(.blue)
+                                }
+
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("Checkpoint \(vm.getCheckpointNumber(for: cp) ?? 0)")
+                                        .font(.subheadline)
+                                        .fontWeight(.medium)
+                                        .foregroundStyle(.primary)
+                                    Text(String(format: "%.5f, %.5f", cp.coordinate.latitude, cp.coordinate.longitude))
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                Spacer()
+
+                                Image(systemName: "scope")
+                                    .foregroundStyle(.secondary)
+                                    .font(.caption)
+                            }
+                            .padding(.vertical, 4)
                         }
                     }
-                    
-                    Spacer()
-                    
-                    Button(action: { showingSaveSheet = true }) {
-                        Image(systemName: "square.and.arrow.down")
-                            .padding(12)
-                            .background(vm.canSaveRoute ? .blue : .gray)
-                            .foregroundColor(.white)
-                            .clipShape(Circle())
-                    }
-                    .disabled(!vm.canSaveRoute)
-                    
-                    Button(action: { vm.zoomToFitRouteSegments(mapView: mapView) }) {
-                        Image(systemName: "location.magnifyingglass")
-                            .padding(12)
-                            .background(.ultraThinMaterial)
-                            .clipShape(Circle())
+                    .onDelete { vm.deleteCheckpointsFromList(atOffsets: $0) }
+                    .onMove { vm.moveCheckpointInList(from: $0, to: $1) }
+                }
+            }
+            .navigationTitle("Checkpoints")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { showCheckpointList = false }
+                }
+                if !vm.checkpoints.isEmpty {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        EditButton()
                     }
                 }
-                .padding(.horizontal)
             }
-            .padding(.bottom)
         }
-        .sheet(isPresented: $showingSaveSheet) {
-            SaveRouteView(vm: vm, isPresented: $showingSaveSheet)
-        }
-        .overlay(
-            Text(dragInProgress ? "Drag to rearrange checkpoints" : "Long press checkpoints to move")
-                .font(.caption)
-                .padding(8)
-                .background(.regularMaterial)
-                .cornerRadius(8)
-                .opacity(vm.checkpoints.isEmpty ? 0 : 1)
-                .animation(.easeInOut, value: vm.checkpoints.isEmpty),
-            alignment: .top
-        )
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
     }
-    
+
+    // MARK: - Helpers
+    private func pinTypeColor(_ type: LocationPin.PointType) -> Color {
+        switch type {
+        case .start: return .green
+        case .checkpoint: return .blue
+        case .end: return .red
+        }
+    }
+
+    private func handleMapTap(_ coordinate: CLLocationCoordinate2D) {
+        vm.addAnnotation(at: coordinate, type: selectedPointType)
+    }
+
     private func handleAnnotationDragStateChanged(_ annotation: LocationPin, newCoordinate: CLLocationCoordinate2D, dragState: AnnotationDragState) {
         switch dragState {
         case .starting:
             dragInProgress = true
-            // vm.selectAnnotation(annotation) is now called by the Coordinator's didChangeDragState
-            print("View: Drag Starting for \(annotation.type)")
         case .dragging:
             dragInProgress = true
-            // For live route updates (can be performance intensive if vm.updateAnnotationPosition causes full recalc):
-            // vm.updateAnnotationPosition(annotation, newCoordinate: newCoordinate)
-            print("View: Dragging \(annotation.type)")
-            break
         case .ending:
             dragInProgress = false
             vm.updateAnnotationPosition(annotation, newCoordinate: newCoordinate)
-            print("View: Drag Ended for \(annotation.type)")
         case .canceling:
             dragInProgress = false
-            // MapKit might have already reverted the annotation's coordinate if it supports revert on cancel.
-            // Or, it might leave it at the last dragged position.
-            // We update our model to whatever coordinate the annotation has at cancellation.
             vm.updateAnnotationPosition(annotation, newCoordinate: newCoordinate)
-            print("View: Drag Canceled for \(annotation.type)")
-        case .none: // This state is after .ending or .canceling
-            if dragInProgress { // If we were indeed tracking a drag
-                dragInProgress = false
-                // The position should have been updated by .ending or .canceling handler
-                // but if MKMapView calls .none after .ending, ensure model consistency.
-                // vm.updateAnnotationPosition(annotation, newCoordinate: newCoordinate)
-                print("View: Drag transitioned to None for \(annotation.type)")
-            }
+        case .none:
+            if dragInProgress { dragInProgress = false }
         }
     }
-    
+
     private func setupMap() {
         mapView.showsUserLocation = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             vm.centerMapOnUser(mapView: mapView)
         }
     }
-    
-    private func handleMapTap(_ coordinate: CLLocationCoordinate2D) {
-        vm.addAnnotation(at: coordinate, type: selectedPointType)
-    }
-    
-    private func handleAnnotationDrag(_ annotation: LocationPin, newCoordinate: CLLocationCoordinate2D) {
-        if annotation.type == .checkpoint {
-            dragInProgress = true
-            vm.updateAnnotationPosition(annotation, newCoordinate: newCoordinate)
-        }
-    }
-    
-    private var headerControls: some View {
-            HStack {
-                if vm.selectedAnnotation != nil && vm.selectedAnnotation?.type == .checkpoint {
-                    Button(action: vm.removeSelectedAnnotation) {
-                        Label("Remove", systemImage: "trash")
-                            .controlStyle(.destructive)
-                    }
-                }
-                
-                Spacer()
-                
-                Button(action: { showingSaveSheet = true }) {
-                    Label("Save", systemImage: "square.and.arrow.down")
-                        .controlStyle(.primary)
-                }
-                .disabled(!vm.canSaveRoute)
-            }
-            .padding()
-            .background(.ultraThinMaterial)
-        }
-
 }
 
+// MARK: - Pin Type Button
+private struct PinTypeButton: View {
+    let icon: String
+    let label: String
+    let color: Color
+    let isSelected: Bool
+    let hasPin: Bool
+    let action: () -> Void
 
-// MARK: - Style Modifiers
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 5) {
+                ZStack(alignment: .topTrailing) {
+                    Image(systemName: icon)
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundStyle(isSelected ? .white : color)
+                        .frame(width: 48, height: 48)
+                        .background(
+                            isSelected ? color : color.opacity(0.1),
+                            in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .strokeBorder(isSelected ? color : Color.clear, lineWidth: 2)
+                        )
+
+                    // Placed dot indicator
+                    if hasPin {
+                        Circle()
+                            .fill(Color.white)
+                            .frame(width: 10, height: 10)
+                            .overlay(Circle().fill(color).padding(2))
+                            .offset(x: 4, y: -4)
+                    }
+                }
+
+                Text(label)
+                    .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
+                    .foregroundStyle(isSelected ? color : .secondary)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.plain)
+        .scaleEffect(isSelected ? 1.03 : 1.0)
+        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isSelected)
+    }
+}
+
+// MARK: - Style Modifiers (kept for compatibility)
 struct ControlButtonStyle: ButtonStyle {
     let color: Color
     let isSelected: Bool
-    
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .padding(12)
@@ -222,7 +505,7 @@ enum ControlStyle {
 
 struct ControlStyleModifier: ViewModifier {
     let style: ControlStyle
-    
+
     func body(content: Content) -> some View {
         switch style {
         case .primary:
@@ -247,13 +530,12 @@ enum AnnotationDragState {
     case starting, dragging, ending, canceling, none
 }
 
-
-// MARK: - Helper Structs & Extensions (Ensure these are defined)
+// MARK: - MapViewBridge (unchanged core logic, kept here)
 struct MapViewBridge: UIViewRepresentable {
     @Binding var mapView: MKMapView
-    var annotations: [LocationPin] // Your LocationPin model
+    var annotations: [LocationPin]
     var routeSegments: [MKPolyline]
-    @ObservedObject var vm: RouteCreationViewModel // Your ViewModel
+    @ObservedObject var vm: RouteCreationViewModel
     var onMapTap: (CLLocationCoordinate2D) -> Void
     var onAnnotationDragStateChanged: (LocationPin, CLLocationCoordinate2D, AnnotationDragState) -> Void
 
@@ -265,13 +547,9 @@ struct MapViewBridge: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: MKMapView, context: Context) {
-        // Remove old annotations (excluding user location)
         let oldAnnotationsOnMap = uiView.annotations.filter { !($0 is MKUserLocation) }
         uiView.removeAnnotations(oldAnnotationsOnMap)
-        // Add new annotations from the ViewModel
         uiView.addAnnotations(annotations)
-
-        // Update overlays
         uiView.removeOverlays(uiView.overlays)
         uiView.addOverlays(routeSegments)
     }
@@ -283,7 +561,10 @@ struct MapViewBridge: UIViewRepresentable {
     class Coordinator: NSObject, MKMapViewDelegate {
         var parent: MapViewBridge
         var vm: RouteCreationViewModel
-        let segmentColors: [UIColor] = [ .systemBlue, .systemGreen, .systemOrange, .systemPurple, .systemRed, .systemTeal, .systemIndigo, .systemYellow ]
+        let segmentColors: [UIColor] = [
+            .systemBlue, .systemGreen, .systemOrange,
+            .systemPurple, .systemRed, .systemTeal, .systemIndigo
+        ]
 
         init(_ parent: MapViewBridge, vm: RouteCreationViewModel) {
             self.parent = parent
@@ -295,20 +576,19 @@ struct MapViewBridge: UIViewRepresentable {
             guard gestureRecognizer.state == .ended else { return }
             let mapView = gestureRecognizer.view as! MKMapView
             let touchPoint = gestureRecognizer.location(in: mapView)
-            
+
             var tappedOnAnnotationView = false
             for annotation in mapView.annotations {
                 if let view = mapView.view(for: annotation) {
-                    // Check if the tap is within the bounds of an existing annotation view
                     let touchPointInView = gestureRecognizer.location(in: view)
                     if view.bounds.contains(touchPointInView) {
                         tappedOnAnnotationView = true
-                        mapView.selectAnnotation(annotation, animated: true) // Explicitly select
+                        mapView.selectAnnotation(annotation, animated: true)
                         break
                     }
                 }
             }
-            
+
             if !tappedOnAnnotationView {
                 let coordinate = mapView.convert(touchPoint, toCoordinateFrom: mapView)
                 parent.onMapTap(coordinate)
@@ -317,18 +597,13 @@ struct MapViewBridge: UIViewRepresentable {
 
         func mapView(_ mapView: MKMapView, didSelect view: MKAnnotationView) {
             guard let locationPin = view.annotation as? LocationPin else {
-                if !(view.annotation is MKUserLocation) { // Don't deselect for user dot taps
-                    vm.selectAnnotation(nil)
-                }
+                if !(view.annotation is MKUserLocation) { vm.selectAnnotation(nil) }
                 return
             }
-            // Defer selection to drag handler if a drag is likely starting
-            if view.isDraggable && (view.dragState == .starting || view.dragState == .dragging) {
-                return
-            }
+            if view.isDraggable && (view.dragState == .starting || view.dragState == .dragging) { return }
             vm.selectAnnotation(locationPin)
         }
-        
+
         func mapView(_ mapView: MKMapView, didDeselect view: MKAnnotationView) {
             if let deselectedPin = view.annotation as? LocationPin, vm.selectedAnnotation?.id == deselectedPin.id {
                 vm.selectAnnotation(nil)
@@ -338,8 +613,8 @@ struct MapViewBridge: UIViewRepresentable {
         func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
             if annotation is MKUserLocation { return nil }
             guard let locationPin = annotation as? LocationPin else { return nil }
-            
-            let reuseIdentifier = "customAnnotation_\(locationPin.type.hashValue)_\(locationPin.id)"
+
+            let reuseIdentifier = "pin_\(locationPin.type.hashValue)_\(locationPin.id)"
             var annotationView = mapView.dequeueReusableAnnotationView(withIdentifier: reuseIdentifier)
 
             if annotationView == nil {
@@ -349,21 +624,20 @@ struct MapViewBridge: UIViewRepresentable {
             }
 
             if let markerView = annotationView as? MKMarkerAnnotationView {
-                markerView.isDraggable = true // Make pins draggable
-                
+                markerView.isDraggable = true
                 markerView.canShowCallout = (locationPin.type == .checkpoint)
-                markerView.markerTintColor = UIColor(locationPin.type.markerColor) // Ensure UIColor extension for Color exists
                 markerView.glyphImage = UIImage(systemName: locationPin.type.icon)
 
                 if locationPin.type == .checkpoint, let number = vm.getCheckpointNumber(for: locationPin) {
                     markerView.glyphText = "\(number)"
+                    markerView.glyphImage = nil
                 } else {
                     markerView.glyphText = nil
                 }
 
                 if vm.selectedAnnotation?.id == locationPin.id {
-                    markerView.markerTintColor = UIColor.yellow
-                    markerView.transform = CGAffineTransform(scaleX: 1.3, y: 1.3)
+                    markerView.markerTintColor = UIColor.systemYellow
+                    markerView.transform = CGAffineTransform(scaleX: 1.25, y: 1.25)
                     markerView.zPriority = .max
                 } else {
                     markerView.markerTintColor = UIColor(locationPin.type.markerColor)
@@ -375,33 +649,28 @@ struct MapViewBridge: UIViewRepresentable {
         }
 
         func mapView(_ mapView: MKMapView, annotationView view: MKAnnotationView, didChange newState: MKAnnotationView.DragState, fromOldState oldState: MKAnnotationView.DragState) {
-            guard let locationPinAnnotation = view.annotation as? LocationPin else { return }
-
-            let currentCoordinate = view.annotation!.coordinate
-            var swiftUIDragState: AnnotationDragState = .none
+            guard let pin = view.annotation as? LocationPin else { return }
+            let coord = view.annotation!.coordinate
+            var state: AnnotationDragState = .none
 
             switch newState {
             case .starting:
-                swiftUIDragState = .starting
-                vm.selectAnnotation(locationPinAnnotation) // Select when drag starts
-                parent.onAnnotationDragStateChanged(locationPinAnnotation, currentCoordinate, swiftUIDragState)
+                state = .starting
+                vm.selectAnnotation(pin)
+                parent.onAnnotationDragStateChanged(pin, coord, state)
                 return
             case .dragging:
-                swiftUIDragState = .dragging
-                parent.onAnnotationDragStateChanged(locationPinAnnotation, currentCoordinate, swiftUIDragState)
+                state = .dragging
+                parent.onAnnotationDragStateChanged(pin, coord, state)
                 return
-            case .ending:
-                swiftUIDragState = .ending
-            case .canceling:
-                swiftUIDragState = .canceling
+            case .ending:  state = .ending
+            case .canceling: state = .canceling
             case .none:
-                if oldState == .dragging || oldState == .ending || oldState == .canceling {
-                    swiftUIDragState = .none
-                } else { return }
-            @unknown default:
-                return
+                if oldState == .dragging || oldState == .ending || oldState == .canceling { state = .none }
+                else { return }
+            @unknown default: return
             }
-            parent.onAnnotationDragStateChanged(locationPinAnnotation, currentCoordinate, swiftUIDragState)
+            parent.onAnnotationDragStateChanged(pin, coord, state)
         }
 
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
@@ -410,9 +679,11 @@ struct MapViewBridge: UIViewRepresentable {
                 if let index = vm.routeSegments.firstIndex(where: { $0 === polyline }) {
                     renderer.strokeColor = segmentColors[index % segmentColors.count]
                 } else {
-                    renderer.strokeColor = .darkGray
+                    renderer.strokeColor = .systemBlue
                 }
-                renderer.lineWidth = 5; renderer.lineCap = .round; renderer.lineJoin = .round
+                renderer.lineWidth = 5
+                renderer.lineCap = .round
+                renderer.lineJoin = .round
                 return renderer
             }
             return MKOverlayRenderer(overlay: overlay)
@@ -420,32 +691,109 @@ struct MapViewBridge: UIViewRepresentable {
     }
 }
 
-// Needs UIColor extension for Color conversion
+// MARK: - UIColor + Color
 extension UIColor {
     convenience init(_ color: Color) {
-        // Simplified version - assumes RGB color space from SwiftUI Color
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
         if let cgColor = color.cgColor, let components = cgColor.components {
-            let numberOfComponents = cgColor.numberOfComponents
-            if numberOfComponents >= 3 { // RGB or RGBA
-                r = components[0]; g = components[1]; b = components[2]
-                a = components.count >= 4 ? components[3] : 1.0
-            } else if numberOfComponents == 2 { // Grayscale
-                r = components[0]; g = components[0]; b = components[0]; a = components[1]
-            }
+            let n = cgColor.numberOfComponents
+            if n >= 3 { r = components[0]; g = components[1]; b = components[2]; a = components.count >= 4 ? components[3] : 1 }
+            else if n == 2 { r = components[0]; g = components[0]; b = components[0]; a = components[1] }
         }
-        // Add a fallback or handle other color spaces if necessary
         self.init(red: r, green: g, blue: b, alpha: a)
     }
 }
 
+// MARK: - Route Created Success Overlay
+struct RouteCreatedOverlay: View {
+    let routeName: String
+    let onGoHome: () -> Void
 
-// MARK: - Preview
-struct RouteCreationView_Previews: PreviewProvider {
-    static var previews: some View {
-        // Wrap in NavigationView for preview context if needed
-        NavigationView {
-            RouteCreationView()
+    @State private var checkmarkScale: CGFloat = 0
+    @State private var contentOpacity: CGFloat = 0
+
+    var body: some View {
+        ZStack {
+            // Blurred backdrop
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .ignoresSafeArea()
+
+            VStack(spacing: 32) {
+                Spacer()
+
+                // Animated checkmark
+                ZStack {
+                    Circle()
+                        .fill(Color.green.opacity(0.15))
+                        .frame(width: 120, height: 120)
+                    Circle()
+                        .fill(Color.green.opacity(0.25))
+                        .frame(width: 90, height: 90)
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 44, weight: .bold))
+                        .foregroundStyle(.green)
+                        .scaleEffect(checkmarkScale)
+                }
+
+                // Text
+                VStack(spacing: 10) {
+                    Text("Route Created!")
+                        .font(.system(size: 30, weight: .bold, design: .rounded))
+                        .foregroundStyle(.primary)
+
+                    Text("\"\(routeName)\" has been saved\nand is ready to race.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .lineSpacing(3)
+                }
+                .opacity(contentOpacity)
+
+                // Buttons
+                VStack(spacing: 12) {
+                    Button(action: onGoHome) {
+                        HStack(spacing: 10) {
+                            Image(systemName: "house.fill")
+                            Text("Go to Home")
+                                .fontWeight(.semibold)
+                        }
+                        .font(.system(size: 17))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                        .background(Color.blue, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    }
+
+                    Button(action: onGoHome) {
+                        Text("Race Now")
+                            .fontWeight(.medium)
+                            .font(.system(size: 15))
+                            .foregroundStyle(.blue)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(Color.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    }
+                }
+                .padding(.horizontal, 32)
+                .opacity(contentOpacity)
+
+                Spacer()
+            }
+        }
+        .onAppear {
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.6).delay(0.1)) {
+                checkmarkScale = 1
+            }
+            withAnimation(.easeOut(duration: 0.4).delay(0.25)) {
+                contentOpacity = 1
+            }
         }
     }
+}
+
+// MARK: - Preview
+#Preview {
+    RouteCreationView()
+        .environmentObject(AppState())
 }

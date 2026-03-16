@@ -11,12 +11,16 @@ import SwiftUI
 import Combine
 
 private let userProfileKey = "userProfileData"
+private let addedFriendNamesKey = "addedFriendNames"
 
 class AppState: ObservableObject {
     @Published var userProfile: UserProfile
     @Published var savedRoutes: [SavedRoute] = []
     @Published var friends: [Friend] = []
     @Published var activityFeed: [ActivityFeedItem] = []
+    @Published var selectedTab: Int = 0  // 0 = Home
+    /// Names the user has explicitly added; persisted to UserDefaults.
+    @Published var addedFriendNames: [String] = []
 
     init() {
         // Load or create user profile
@@ -26,6 +30,9 @@ class AppState: ObservableObject {
         } else {
             self.userProfile = UserProfile()
         }
+
+        // Load added friend names
+        self.addedFriendNames = UserDefaults.standard.stringArray(forKey: addedFriendNamesKey) ?? []
 
         loadRoutes()
         refreshFriendsAndFeed()
@@ -67,12 +74,32 @@ class AppState: ObservableObject {
 
     // MARK: - Friends & Feed
     func refreshFriendsAndFeed() {
-        friends = MockFriendGenerator.generateFriends(routes: savedRoutes)
+        // Only show friends the user has added
+        let allMock = MockFriendGenerator.generateFriends(routes: savedRoutes)
+        friends = allMock.filter { addedFriendNames.contains($0.name) }
         activityFeed = ActivityFeedGenerator.buildFeed(
             userRoutes: savedRoutes,
             userProfile: userProfile,
             friends: friends
         )
+    }
+
+    func addFriend(name: String) {
+        guard !addedFriendNames.contains(name) else { return }
+        addedFriendNames.append(name)
+        UserDefaults.standard.set(addedFriendNames, forKey: addedFriendNamesKey)
+        refreshFriendsAndFeed()
+    }
+
+    func removeFriend(name: String) {
+        addedFriendNames.removeAll { $0 == name }
+        UserDefaults.standard.set(addedFriendNames, forKey: addedFriendNamesKey)
+        refreshFriendsAndFeed()
+    }
+
+    /// All mock names available to add (not yet added)
+    var suggestedFriendNames: [String] {
+        MockFriendGenerator.friendNames.filter { !addedFriendNames.contains($0) }
     }
 
     // MARK: - User Stats
